@@ -1,6 +1,6 @@
 # Decisions for Coding
 
-Skill para que Codex clasifique tareas de ingeniería mediante la Decisions API de OpenAI (`gpt-6-luna`) y use el resultado como orientación. La respuesta no sustituye la revisión del código ni autoriza cambios fuera de la petición del usuario.
+Skill para que Codex o Claude Code clasifique tareas de ingeniería mediante la Decisions API de OpenAI (`gpt-6-luna`) o la API local de decisiones de Ollama (`tev1:0.8b`). La respuesta no sustituye la revisión del código ni autoriza cambios fuera de la petición del usuario.
 
 Este proyecto se distribuye bajo la licencia [MIT](LICENSE).
 
@@ -21,12 +21,13 @@ El directorio `.claude/skills/decisions-for-coding/` contiene un espejo de instr
 ## Requisitos
 
 - Python 3.9 o superior.
-- Una API key propia con acceso a la Decisions API y al modelo `gpt-6-luna`.
-- La librería oficial `openai` 3.26.0 o superior.
+- Para OpenAI: una API key con acceso a la Decisions API/modelo `gpt-6-luna` y la librería oficial `openai` 3.26.0 o superior.
+- Para Ollama: Ollama 0.35 o superior, en ejecución, y un modelo de decisiones descargado. Este ejemplo usa `tev1:0.8b`.
+- El backend Ollama usa la librería estándar de Python; no necesita instalar `openai` ni crear un entorno virtual.
 
 ## Instalar la skill en Codex
 
-Clona este repositorio y copia la carpeta de la skill a tu instalación personal de Codex:
+En Linux o macOS, clona el repositorio y copia la skill al directorio personal de Codex:
 
 ```bash
 git clone https://github.com/jdvacasf/decission-skill.git
@@ -40,7 +41,7 @@ Reinicia Codex o abre una sesión nueva para que descubra la skill.
 
 ## Preparar el entorno
 
-Desde el directorio instalado de la skill, crea un entorno virtual e instala sus dependencias:
+Solo necesitas este paso para usar el backend OpenAI. Desde el directorio instalado de la skill, crea un entorno virtual e instala sus dependencias:
 
 Linux o macOS:
 
@@ -66,7 +67,7 @@ sudo apt install python3.13-venv
 
 Después vuelve a ejecutar `python3 -m venv .venv`.
 
-## Configurar la API key
+## Configurar OpenAI
 
 Configura `OPENAI_API_KEY` en el entorno del proceso que inicia Codex. No la guardes en el repositorio ni la incluyas en los textos de decisión.
 
@@ -78,7 +79,31 @@ printf '\n'
 export OPENAI_API_KEY
 ```
 
-Cada invocación hace una llamada a la API y puede generar coste. Solo se envía el texto incluido en el campo `input` y las instrucciones/opciones de la pregunta.
+Cada invocación con este backend hace una llamada remota y puede generar coste. Solo se envía el texto incluido en `input` y las instrucciones/opciones de la pregunta.
+
+## Usar Ollama local
+
+Actualiza Ollama a la versión 0.35 o superior, inicia su servicio y descarga el modelo:
+
+```bash
+ollama pull tev1:0.8b
+```
+
+Indica `"backend":"ollama"` en la petición. El modelo predeterminado de este backend es `tev1:0.8b`; la dirección por defecto es `http://localhost:11434`. Puedes cambiarla con `OLLAMA_BASE_URL`.
+
+```bash
+printf '%s' '{
+  "backend": "ollama",
+  "input": "El endpoint devuelve un error 500 cuando falta email",
+  "question": "¿Qué tipo de tarea es?",
+  "type": "choice",
+  "choices": ["feature", "bugfix", "refactor"]
+}' | python3 scripts/decisions_classifier.py
+```
+
+Ejecuta la prueba desde el directorio instalado (`~/.codex/skills/decisions-for-coding`). Si devuelve un JSON con `"choice"`, Ollama y el clasificador están conectados; en una sesión nueva de Codex puedes invocar el skill con `$decisions-for-coding`.
+
+Ollama recibe la solicitud en `/v1/systemone`; el texto se envía como `state` y la pregunta como una decisión con nombre. El tipo `predicate` se traduce al tipo Ollama `noul`. El texto se procesa en el servidor Ollama configurado, no en OpenAI.
 
 ## Prueba manual
 
@@ -86,6 +111,7 @@ Desde la carpeta instalada de la skill:
 
 ```bash
 printf '%s' '{
+  "backend": "openai",
   "input": "La exportación falla al generar el informe",
   "question": "¿Qué tipo de trabajo requiere esta tarea?",
   "type": "choice",
@@ -100,7 +126,7 @@ printf '%s' '{
 Salida de ejemplo:
 
 ```json
-{"model":"gpt-6-luna","answer":{"type":"choice","name":"decision","choice":"bugfix","confidence":0.97}}
+{"backend":"openai","model":"gpt-6-luna","answer":{"type":"choice","name":"decision","choice":"bugfix","confidence":0.97}}
 ```
 
 El protocolo lee un objeto JSON desde `stdin` y escribe un objeto JSON en `stdout`. Acepta `choice`, `predicate` y `score`; `choice` requiere `choices` y `score` requiere `levels`. Los errores también se devuelven como JSON y el proceso termina con código distinto de cero.
