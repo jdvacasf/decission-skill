@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate a decision through OpenAI Decisions API or local Ollama."""
+"""Evaluate a decision through OpenAI, Ollama, or Jev."""
 
 import json
 import os
@@ -54,25 +54,25 @@ def main() -> None:
             error("'levels' must be a non-empty list for a score decision")
         question_data["levels"] = levels
 
-    backend = request.get("backend", "openai")
-    if backend not in {"openai", "ollama"}:
-        error("'backend' must be 'openai' or 'ollama'")
+    backend = request.get("backend")
+    if backend not in ("openai", "ollama", "jev"):
+        error("'backend' must be explicitly set to 'openai', 'ollama', or 'jev'")
 
-    if backend == "ollama":
-        ollama_question = {"instructions": question}
+    if backend in ("ollama", "jev"):
+        systemone_question = {"instructions": question}
         if question_type == "choice":
-            ollama_question["type"] = "choice"
-            ollama_question["criteria"] = {
+            systemone_question["type"] = "choice"
+            systemone_question["criteria"] = {
                 str(option["value"] if isinstance(option, dict) else option): (
                     option.get("description", "") if isinstance(option, dict) else ""
                 )
                 for option in choices
             }
         elif question_type == "predicate":
-            ollama_question["type"] = "noul"
+            systemone_question["type"] = "noul"
         else:
-            ollama_question["type"] = "score"
-            ollama_question["criteria"] = [
+            systemone_question["type"] = "score"
+            systemone_question["criteria"] = [
                 level.get("label", level.get("value", str(level)))
                 if isinstance(level, dict)
                 else level
@@ -80,16 +80,24 @@ def main() -> None:
             ]
 
         payload = {
-            "model": request.get("model", "tev1:0.8b"),
+            "model": request.get("model", "jev-latest" if backend == "jev" else "tev1:0.8b"),
             "state": {"input": input_text},
-            "questions": {name: ollama_question},
+            "questions": {name: systemone_question},
         }
-        base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        if backend == "jev":
+            api_key = os.environ.get("TYPESAFE_API_KEY")
+            if not api_key:
+                error("TYPESAFE_API_KEY is required for the Jev backend")
+            base_url = "https://api.typesafe.ai"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        else:
+            base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+            headers = {"Content-Type": "application/json"}
         try:
             http_request = Request(
                 f"{base_url}/v1/systemone",
                 data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             )
             with urlopen(http_request, timeout=120) as response:
                 decision = json.load(response)
@@ -99,8 +107,10 @@ def main() -> None:
             else:
                 answer = {"type": question_type, "name": name, **answer}
             result = {"backend": backend, "model": decision.get("model", payload["model"]), "answer": answer}
+            if backend == "jev" and "usage" in decision:
+                result["usage"] = decision["usage"]
         except Exception as exc:
-            error(f"Ollama Decisions API error: {exc}")
+            error(f"{backend.capitalize()} Decisions API error: {exc}")
     else:
         try:
             from openai import OpenAI
